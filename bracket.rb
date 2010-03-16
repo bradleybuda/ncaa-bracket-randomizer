@@ -27,7 +27,7 @@ end
 class Game
   extend ActiveSupport::Memoizable
   
-  attr_reader :round, :region, :feeder_games
+  attr_reader :round, :region, :feeder_games, :team_one, :team_two
   
   def winner_advances_to=(game)
     @winner_advances_to = game
@@ -161,8 +161,14 @@ championship = Game.new(:region => 'Final Four', :round => 6, :game_number => ne
 semifinals.each { |sf| sf.winner_advances_to = championship }
 games << championship
 
-games.each do |game|
-  p game
-  p game.winner_probabilities.sort_by { |k, v| v }.reverse.first(4)
-  puts
+# spit out the results as a sparse matrix - rows are teams, columns
+# are games, values are prob that team wins that game
+tournament_teams = games.find_all { |g| g.round == 1 }.map { |g| [g.team_one, g.team_two] }.flatten
+
+tournament_teams.each do |team|
+  columns = games.map do |game|
+    game.winner_probabilities[team] || 0.0
+  end
+
+  puts ([team.name] + columns).join(',')
 end
