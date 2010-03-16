@@ -27,7 +27,7 @@ end
 class Game
   extend ActiveSupport::Memoizable
   
-  attr_reader :round, :region, :feeder_games, :team_one, :team_two
+  attr_reader :round, :region, :feeder_games, :team_one, :team_two, :game_number
   
   def winner_advances_to=(game)
     @winner_advances_to = game
@@ -46,47 +46,65 @@ class Game
     @feeder_games = []
   end
   
-  def winner_probabilities
+  def outcomes
     if round == 1
       # base case
-      p1 = @team_one.chance_of_win_over(@team_two)
-      {@team_one => p1, @team_two => (1 - p1)}
+      p = @team_one.chance_of_win_over(@team_two)
+      [
+       Outcome.new(:game => self, :winner => @team_one, :probability => p),
+       Outcome.new(:game => self, :winner => @team_two, :probability => 1.0 - p),
+      ]
+      
     else
       # recursive case
-      team_one_probabilities, team_two_probabilities = feeder_games.map(&:winner_probabilities)
-
-      results = {}
+      team_one_candidates, team_two_candidates = feeder_games.map(&:outcomes)
       
-      team_one_probabilities.each do |team_one, reach_p1|
+      results = []
+      
+      team_one_candidates.each do |team_one_outcome|
         # liklihood that team will win this round is the liklihood
         # that it reached the round times the liklihood that any
         # particular opponent reached this round times the liklihood
         # of a win over that particular opponent, summed over every
         # possible opponent
 
-        win_p1 = team_two_probabilities.map do |team_two, reach_p2|
-          reach_p1 * reach_p2 * team_one.chance_of_win_over(team_two)
+        p = team_two_candidates.map do |team_two_outcome|
+          team_one_outcome.probability * team_two_outcome.probability * team_one_outcome.winner.chance_of_win_over(team_two_outcome.winner)
         end.sum
-
-        results[team_one] = win_p1
+        
+        results << Outcome.new(:game => self, :winner => team_one_outcome.winner, :probability => p)
       end
 
       # likewise for p2
-      team_two_probabilities.each do |team_two, reach_p2|
-        win_p2 = team_one_probabilities.map do |team_one, reach_p1|
-          reach_p2 * reach_p1 * team_two.chance_of_win_over(team_one)
+      team_two_candidates.each do |team_two_outcome|
+        p = team_one_candidates.map do |team_one_outcome|
+          team_two_outcome.probability * team_one_outcome.probability * team_two_outcome.winner.chance_of_win_over(team_one_outcome.winner)
         end.sum
 
-        results[team_two] = win_p2
+        results << Outcome.new(:game => self, :winner => team_two_outcome.winner, :probability => p)
       end
 
       results
     end
   end
-  memoize :winner_probabilities
+  memoize :outcomes
   
   def inspect
     "#{@region} region, Round #{@round}, Game #{@game_number}"
+  end
+end
+
+class Outcome
+  attr_reader :game, :winner, :probability
+  
+  def initialize(options)
+    @game = options[:game]
+    @winner = options[:winner]
+    @probability = options[:probability]
+  end
+
+  def inspect
+    "#{@winner.name} wins game ##{@game.game_number} (round #{@game.round}) with probability #{@probability}"
   end
 end
 
@@ -161,14 +179,4 @@ championship = Game.new(:region => 'Final Four', :round => 6, :game_number => ne
 semifinals.each { |sf| sf.winner_advances_to = championship }
 games << championship
 
-# spit out the results as a sparse matrix - rows are teams, columns
-# are games, values are prob that team wins that game
-tournament_teams = games.find_all { |g| g.round == 1 }.map { |g| [g.team_one, g.team_two] }.flatten
-
-tournament_teams.each do |team|
-  columns = games.map do |game|
-    game.winner_probabilities[team] || 0.0
-  end
-
-  puts ([team.name] + columns).join(',')
-end
+pp championship.outcomes
