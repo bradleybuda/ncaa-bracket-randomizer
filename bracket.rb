@@ -5,10 +5,12 @@ require 'yajl'
 
 class Team
   attr_reader :name, :pythagorean
+  attr_accessor :seed
   
   def initialize(options)
     @name = options[:name]
     @pythagorean = options[:pythagorean].to_f
+    @seed = nil
   end
 
   def chance_of_win_over(other)
@@ -103,8 +105,27 @@ class Outcome
     @probability = options[:probability]
   end
 
+  # points under TS CBS scoring system
+  def points
+    points_by_round = [nil, 3, 5, 8, 13, 21, 34]
+    points_by_round[@game.round] + @winner.seed
+  end
+
+  def expected_points
+    points.to_f * @probability
+  end
+  
+  def prerequisites
+    if @game.round == 1
+      []
+    else
+      required_outcome = @game.feeder_games.map(&:outcomes).flatten.find { |o| o.winner == @winner }
+      [required_outcome] + required_outcome.prerequisites
+    end
+  end
+
   def inspect
-    "#{@winner.name} wins game ##{@game.game_number} (round #{@game.round}) with probability #{@probability}"
+    "#{@winner.name} wins ##{@game.game_number} (round #{@game.round}); p = #{'%.3f' % @probability}, score = #{points}, E(score) = #{expected_points}"
   end
 end
 
@@ -123,7 +144,7 @@ kenpom = File.readlines('pom2010.html').map do |l|
 end.compact
 
 # make sure we agree on all our team names and build a structure
-# {"region" -> {seed -> [name, pyth, adjo, adjd]}}
+# {"region" -> {seed -> Team}}
 merged = {}
 bracket.each do |region, seeds|
   merged[region] = {}
@@ -133,8 +154,9 @@ bracket.each do |region, seeds|
     teams.each_with_index do |team, i|
       team_kenpom = kenpom.find { |t| t.name == team }
       raise "Can't find kenpom for #{team}" if team_kenpom.nil?
-      
-      merged[region][seed.to_i + i] = team_kenpom # treating the second team in the play-in as a 17 seed
+
+      team_kenpom.seed = seed.to_i + i # treating the second team in the play-in as a 17 seed b/c the original author did
+      merged[region][team_kenpom.seed] = team_kenpom
     end
   end
 end
@@ -179,4 +201,34 @@ championship = Game.new(:region => 'Final Four', :round => 6, :game_number => ne
 semifinals.each { |sf| sf.winner_advances_to = championship }
 games << championship
 
-pp championship.outcomes
+possible_outcomes = games.map { |g| g.outcomes }.flatten
+
+# greedily pick outcomes by expected value
+picked_outcomes = []
+
+until possible_outcomes.empty?
+  next_pick = possible_outcomes.max_by(&:expected_points)
+  possible_outcomes -= [next_pick] # either we're going to pick this or discard it
+  
+  # make sure neither the pick nor its prerequisites conflict with picks already made for other teams
+  prerequisite_outcomes = next_pick.prerequisites
+  if ([next_pick] + prerequisite_outcomes).any? { |prereq| picked_outcomes.any? { |picked| picked.game == prereq.game && picked.winner != prereq.winner } }
+    STDOUT.puts "discarding '#{next_pick.inspect}' because it is in conflict with another pick"
+    next
+  end
+  
+  # pick the outcome and its prereqs
+  # TODO some of these prereqs are getting picked twice; that's okay, we'll uniq them out at the end
+  possible_outcomes -= prerequisite_outcomes
+  picked_outcomes += [next_pick] + prerequisite_outcomes
+  STDOUT.puts "picked #{next_pick.inspect} and #{prerequisite_outcomes.size} prerequisites"
+
+  # TODO can be smarter about pruning impossible outcomes here; we'll
+  # need to do this if we ever implement more interesting search
+  # strategies
+end
+
+picks = picked_outcomes.uniq
+
+pp picks
+puts "expected points: #{picks.map(&:expected_points).sum}"
