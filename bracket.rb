@@ -25,6 +25,8 @@ class Team
 end
 
 class Game
+  extend ActiveSupport::Memoizable
+  
   attr_reader :round, :region, :feeder_games
   
   def winner_advances_to=(game)
@@ -81,9 +83,10 @@ class Game
       results
     end
   end
+  memoize :winner_probabilities
   
   def inspect
-    "#{@team_one[:name]} vs #{@team_two[:name]} round #{@round} game #{@game_number} region #{@region}"
+    "#{@region} region, Round #{@round}, Game #{@game_number}"
   end
 end
 
@@ -158,6 +161,8 @@ championship = Game.new(:region => 'Final Four', :round => 6, :game_number => ne
 semifinals.each { |sf| sf.winner_advances_to = championship }
 games << championship
 
-probs = championship.winner_probabilities
-pp probs
-pp probs.values.sum
+games.each do |game|
+  p game
+  p game.winner_probabilities.sort_by { |k, v| v }.reverse.first(4)
+  puts
+end
